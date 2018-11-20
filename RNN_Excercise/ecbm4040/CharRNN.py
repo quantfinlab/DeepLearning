@@ -5,6 +5,7 @@ import time
 import os
 import tensorflow.contrib.rnn as rnn
 
+
 def pick_top_n(preds, vocab_size, top_n=5):
     '''
     choose top_n most possible charactors in predictions
@@ -66,8 +67,8 @@ class CharRNN():
         self.my_loss()
         self.my_optimizer()
         self.saver = tf.train.Saver()
-    
-    
+        
+ 
     def inputs_layer(self):
         '''
         build the input layer
@@ -79,6 +80,7 @@ class CharRNN():
         self.keep_prob = tf.placeholder(tf.float32, name='keep_prob')
         # one_hot encoding
         self.rnn_inputs = tf.one_hot(self.inputs, self.num_classes)
+        
     
     
     def rnn_layer(self):
@@ -98,18 +100,29 @@ class CharRNN():
         
         if self.cell_type =='GRU':
             cells = [rnn.GRUCell(self.rnn_size) for _ in range(self.num_layers)]
+                
+            dropcells = [rnn.DropoutWrapper(cell,input_keep_prob=self.train_keep_prob) for cell in cells]
+            ##Check stat is tuple variable
+            multicell = rnn.MultiRNNCell(dropcells, state_is_tuple=False)
+            multicell = rnn.DropoutWrapper(multicell, output_keep_prob=self.train_keep_prob )  
+        elif self.cell_type =='LSTM':
+            cells = [rnn.LSTMCell(self.rnn_size) for _ in range(self.num_layers)]
+                
+            dropcells = [rnn.DropoutWrapper(cell,input_keep_prob=self.train_keep_prob) for cell in cells]
+            ##Check stat is tuple variable
+            multicell = rnn.MultiRNNCell(dropcells, state_is_tuple=True)
+            multicell = rnn.DropoutWrapper(multicell, output_keep_prob=self.train_keep_prob )  
         
-        dropcells = [rnn.DropoutWrapper(cell,input_keep_prob=pkeep) for cell in cells]
-        ##Check stat is tuple variable
-        multicell = rnn.MultiRNNCell(dropcells, state_is_tuple=False)
-        multicell = rnn.DropoutWrapper(multicell, output_keep_prob=self.train_keep_prob )  
         
+#         with tf.name_scope('initial_state'):
+#             self.zero_state = multicell.zero_state(self.batch_size, tf.float32)
+#             self.initial_state = self.create_tuple_placeholders_with_default(inputs=self.zero_state,shape=multicell.state_size)
+        
+        self.initial_state = multicell.zero_state(self.batch_size, tf.float32)
         self.rnn_outputs,self.final_state = tf.nn.dynamic_rnn(multicell, self.rnn_inputs, dtype=tf.float32)     
        
         
-          
 
-    
     
     def outputs_layer(self):
         ''' 
@@ -166,7 +179,7 @@ class CharRNN():
         gvs = optimizer.compute_gradients(self.loss)
         capped_gvs = [(tf.clip_by_value(grad, -5., 5.), var) for grad, var in gvs]
         self.optimizer = optimizer.apply_gradients(capped_gvs)
-        self. optimizer = optimizer
+        
         
         
     def train(self, batches, max_count, save_every_n):
@@ -182,7 +195,7 @@ class CharRNN():
                 feed = {self.inputs: x,
                         self.targets: y,
                         self.keep_prob: self.train_keep_prob,
-                        self.initial_state: np.zeros([self.batch_size, self.rnn_size*self.num_layers])}
+                        self.initial_state: new_state}
                 batch_loss, new_state, _ = sess.run([self.loss, 
                                                      self.final_state, 
                                                      self.optimizer], 
@@ -215,7 +228,51 @@ class CharRNN():
         -a string of generated characters
         '''
         # change text into character list
+
+        self.session = tf.Session()
+        self.saver.restore(self.session, checkpoint)
+        new_state = self.session.run(self.initial_state)
         samples = [c for c in prime]
+        
+        #Pass intial characters
+        for char in prime:
+            
+                #counter += 1
+                #start = time.time()
+                c_input = np.zeros((1, 1))
+
+                c_input[0, 0] = vocab_to_ind.get(char)
+                
+                feed = {self.inputs: c_input,
+                        #self.targets: y
+                        self.keep_prob: 1,
+                        self.initial_state: new_state}
+                preds, nstate = self.session.run([self.prob_pred, self.final_state],
+                                        feed_dict=feed)
+                
+                c = pick_top_n(preds, vocab_size)
+            
+                
+        for i in range(n_samples):
+                #counter += 1
+                #start = time.time()
+                c_input = np.zeros((1, 1))
+
+                c_input[0, 0] = c
+                
+                feed = {self.inputs: c_input,
+                        #self.targets: y
+                        self.keep_prob: 1,
+                        self.initial_state: new_state}
+                preds, nstate = self.session.run([self.prob_pred, self.final_state],
+                                        feed_dict=feed)
+                
+                c = pick_top_n(preds, vocab_size)
+               
+                ##Append the 
+                samples.append(ind_to_vocab.get(c))
+
+        return np.array(samples)
         #####################################################################################
         # TODO: implement sampling function
         # Hint: you should restore from saved checkpoint, start the model in sampling mode on 
